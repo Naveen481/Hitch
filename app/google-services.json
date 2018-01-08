@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "530591645139",
+    "firebase_url": "https://hitch-49477.firebaseio.com",
+    "project_id": "hitch-49477",
+    "storage_bucket": "hitch-49477.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:530591645139:android:9210923ca534afab",
+        "android_client_info": {
+          "package_name": "com.naveen.hitch"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "530591645139-75g207g31md11vuo65mu3ghg95m5kdc2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.naveen.hitch",
+            "certificate_hash": "8550f57aae9778db903e1224a2628c1cc764c0fd"
+          }
+        },
+        {
+          "client_id": "530591645139-o7l6e0sv1ikp57rhaok29fnrvgf6pu1u.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDFWH69arAGQpaEo9Qdm1DFaOtVZO6aCc0"
+        }
+      ],
+      "services": {
+        "analytics_service": {
+          "status": 1
+        },
+        "appinvite_service": {
+          "status": 2,
+          "other_platform_oauth_client": [
+            {
+              "client_id": "530591645139-o7l6e0sv1ikp57rhaok29fnrvgf6pu1u.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        },
+        "ads_service": {
+          "status": 2
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
