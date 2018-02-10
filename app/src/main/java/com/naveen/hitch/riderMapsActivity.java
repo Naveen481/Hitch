@@ -1,44 +1,262 @@
 package com.naveen.hitch;
 
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.location.Location;
 import android.location.LocationListener;
+import android.os.PersistableBundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.design.widget.NavigationView;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.app.FragmentActivity;
 import android.os.Bundle;
+import android.support.v4.widget.DrawerLayout;
+import android.support.v7.app.ActionBarDrawerToggle;
+import android.support.v7.app.AppCompatActivity;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.Button;
+import android.widget.Toast;
 
 import com.firebase.geofire.GeoFire;
 import com.firebase.geofire.GeoLocation;
+import com.firebase.geofire.GeoQuery;
+import com.firebase.geofire.GeoQueryEventListener;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.Status;
+import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.ui.PlaceAutocompleteFragment;
+import com.google.android.gms.location.places.ui.PlaceSelectionListener;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
 
-public class riderMapsActivity extends FragmentActivity implements OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, com.google.android.gms.location.LocationListener {
+import java.util.HashMap;
+import java.util.List;
+
+public class riderMapsActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener, OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, com.google.android.gms.location.LocationListener {
+
     private GoogleMap mMap;
     GoogleApiClient mGoogleApiClient;
     Location mLastKnownLocation;
     LocationRequest mLocationRequest;
+    private Button mRequest;
+    private LatLng pickUpLocation;
+    private float cameraZoom = 13;
+
+    private DrawerLayout mDrawerLayout;
+    private ActionBarDrawerToggle mToggle;
+    private Boolean isLoggingOut = false;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_driver_maps);
+        setContentView(R.layout.activity_rider_maps);
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
+
+        mDrawerLayout = (DrawerLayout) findViewById(R.id.riderDrawerLayout);
+        mToggle = new ActionBarDrawerToggle(this, mDrawerLayout, R.string.open, R.string.close);
+        mDrawerLayout.addDrawerListener(mToggle);
+        mToggle.syncState();
+
+        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        NavigationView navigationView = (NavigationView) findViewById(R.id.navigation_view);
+        navigationView.setNavigationItemSelectedListener(this);
+        Menu menu = navigationView.getMenu();
+        MenuItem nav_driverMode = menu.findItem(R.id.nav_driverMode);
+        nav_driverMode.setTitle("Switch to Driver Mode");
+
+        mRequest = (Button) findViewById(R.id.request);
+        mRequest.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+                DatabaseReference ref = FirebaseDatabase.getInstance().getReference("RiderPosition");
+
+                GeoFire geoFire = new GeoFire(ref);
+
+                geoFire.setLocation(userId, new GeoLocation(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude()));
+
+                pickUpLocation = new LatLng(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude());
+                mMap.addMarker(new MarkerOptions().position(pickUpLocation).title("Pick Up Location"));
+                cameraZoom = 17;
+                mRequest.setText("Finding drivers...");
+
+                findClosestDriver();
+
+                if(driverFound){
+                    Toast.makeText(riderMapsActivity.this, "Driver found", Toast.LENGTH_SHORT).show();
+                }
+                else{
+                    Toast.makeText(riderMapsActivity.this, "No drivers found", Toast.LENGTH_SHORT).show();
+                    mRequest.setText("Request ride");
+                }
+            }
+        });
+
+        PlaceAutocompleteFragment autocompleteFragment = (PlaceAutocompleteFragment)
+                getFragmentManager().findFragmentById(R.id.place_autocomplete_fragment);
+
+        autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
+            @Override
+            public void onPlaceSelected(Place place) {
+                // TODO: Get info about the selected place.
+                Toast.makeText(riderMapsActivity.this, place.getName().toString(), Toast.LENGTH_LONG).show();
+//                Log.i(TAG, "Place: " + place.getName());
+            }
+
+            @Override
+            public void onError(Status status) {
+                // TODO: Handle the error.
+//                Log.i(TAG, "An error occurred: " + status);
+            }
+        });
+
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if(mToggle.onOptionsItemSelected(item)){
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private int radius = 1;
+    private Boolean driverFound = false;
+    private String driverId;
+    private void findClosestDriver(){
+        DatabaseReference driversAvailable = FirebaseDatabase.getInstance().getReference().child("AvailableDrivers");
+        GeoFire geoFire = new GeoFire(driversAvailable);
+        if (radius < 70){
+            GeoQuery geoQuery = geoFire.queryAtLocation(new GeoLocation(pickUpLocation.latitude, pickUpLocation.longitude), radius);
+            geoQuery.removeAllListeners();
+            geoQuery.addGeoQueryEventListener(new GeoQueryEventListener() {
+                @Override
+                public void onKeyEntered(String key, GeoLocation location) {
+                    if (!driverFound){
+                        driverFound = true;
+                        driverId = key;
+
+                        DatabaseReference driverRef = FirebaseDatabase.getInstance().getReference().child("Users").child(driverId);
+                        String riderId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+
+                        HashMap map = new HashMap();
+                        map.put("RiderId", riderId);
+                        driverRef.updateChildren(map);
+
+                        getDriverLocation();
+                    }
+                }
+
+                @Override
+                public void onKeyExited(String key) {
+
+                }
+
+                @Override
+                public void onKeyMoved(String key, GeoLocation location) {
+
+                }
+
+                @Override
+                public void onGeoQueryReady() {
+                    if (!driverFound){
+                        radius++;
+                        findClosestDriver();
+                    }
+                }
+
+                @Override
+                public void onGeoQueryError(DatabaseError error) {
+
+                }
+            });
+        }
+
+    }
+
+    @Override
+    public boolean onNavigationItemSelected(@NonNull MenuItem item) {
+        int id = item.getItemId();
+        if(id == R.id.nav_Profile){
+            Toast.makeText(this, "You are trying to access your profile", Toast.LENGTH_LONG).show();
+        }
+        if(id == R.id.nav_driverMode){
+            isLoggingOut = true;
+            disconnectRider();
+            Intent intent = new Intent(riderMapsActivity.this, DriverMapsActivity.class);
+            startActivity(intent);
+            finish();
+        }
+        if(id == R.id.nav_logout){
+            isLoggingOut = true;
+            disconnectRider();
+            FirebaseAuth.getInstance().signOut();
+            Intent intent = new Intent(riderMapsActivity.this, LoginActivity.class);
+            startActivity(intent);
+            finish();
+        }
+        return false;
+    }
+
+    @Override
+    public void onPostCreate(@Nullable Bundle savedInstanceState, @Nullable PersistableBundle persistentState) {
+        super.onPostCreate(savedInstanceState, persistentState);
+        mToggle.syncState();
+    }
+
+    private Marker mDriverMarker;
+    private void getDriverLocation(){
+        DatabaseReference driverLocationRef = FirebaseDatabase.getInstance().getReference().child("WorkingDrivers").child(driverId).child("l");
+        driverLocationRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot dataSnapshot) {
+                if(dataSnapshot.exists()){
+                    List<Object> map = (List<Object>) dataSnapshot.getValue();
+                    double lat = 0;
+                    double lng = 0;
+                    mRequest.setText("Driver Found...");
+                    if (map.get(0) != null && map.get(1) != null){
+                        lat = Double.parseDouble(map.get(0).toString());
+                        lng = Double.parseDouble(map.get(1).toString());
+                    }
+                    LatLng driverLatLng = new LatLng(lat, lng);
+                    if (mDriverMarker != null){
+                        mDriverMarker.remove();
+                    }
+                    mDriverMarker = mMap.addMarker(new MarkerOptions().position(driverLatLng).title("Driver Location"));
+                }
+            }
+
+            @Override
+            public void onCancelled(DatabaseError databaseError) {
+
+            }
+        });
+
     }
 
 
@@ -55,7 +273,7 @@ public class riderMapsActivity extends FragmentActivity implements OnMapReadyCal
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
 
-//        // Add a marker in Sydney and move the camera
+        // Add a marker in Sydney and move the camera
 //        LatLng sydney = new LatLng(-34, 151);
 //        mMap.addMarker(new MarkerOptions().position(sydney).title("Marker in Sydney"));
 //        mMap.moveCamera(CameraUpdateFactory.newLatLng(sydney));
@@ -67,6 +285,7 @@ public class riderMapsActivity extends FragmentActivity implements OnMapReadyCal
 
         buildGoogleApiClient();
         mMap.setMyLocationEnabled(true);
+
 
 
     }
@@ -83,20 +302,21 @@ public class riderMapsActivity extends FragmentActivity implements OnMapReadyCal
 
     @Override
     public void onLocationChanged(Location location) {
-
         mLastKnownLocation = location;
 
-        LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
+        if(!isLoggingOut){
 
-        mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-        mMap.animateCamera(CameraUpdateFactory.zoomTo(10));
+            LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
 
-        String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
-        DatabaseReference ref = FirebaseDatabase.getInstance().getReference("driversAvailable");
+            mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
+            mMap.animateCamera(CameraUpdateFactory.zoomTo(cameraZoom));
 
-        GeoFire geoFire = new GeoFire(ref);
-        geoFire.setLocation(userId, new GeoLocation(location.getLatitude(), location.getLongitude()));
+            String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+            DatabaseReference ref = FirebaseDatabase.getInstance().getReference("RiderPosition");
 
+            GeoFire geoFire = new GeoFire(ref);
+            geoFire.setLocation(userId, new GeoLocation(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude()));
+        }
     }
 
 
@@ -113,6 +333,7 @@ public class riderMapsActivity extends FragmentActivity implements OnMapReadyCal
         LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient, mLocationRequest, this);
     }
 
+
     @Override
     public void onConnectionSuspended(int i) {
 
@@ -121,18 +342,24 @@ public class riderMapsActivity extends FragmentActivity implements OnMapReadyCal
     @Override
     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
 
+
+
     }
 
-    @Override
-    protected void onStop(){
-        super.onStop();
+    private void disconnectRider(){
 
         String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
-        DatabaseReference ref = FirebaseDatabase.getInstance().getReference("driversAvailable");
+        DatabaseReference ref = FirebaseDatabase.getInstance().getReference("RiderPosition");
 
         GeoFire geoFire = new GeoFire(ref);
         geoFire.removeLocation(userId);
     }
- }
 
-
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if(!isLoggingOut){
+            disconnectRider();
+        }
+    }
+}

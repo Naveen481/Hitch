@@ -26,7 +26,6 @@ public class SignupActivity extends AppCompatActivity {
 
 
     private DatabaseReference mRootRef = FirebaseDatabase.getInstance().getReference();
-    private DatabaseReference mUsersRef = mRootRef.child("users");
 
 
     @Override
@@ -47,11 +46,11 @@ public class SignupActivity extends AppCompatActivity {
         register.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                String email = signUpEmail.getText().toString().trim();
-                String password = signUpPassword.getText().toString().trim();
-                String phone = signUpPhone.getText().toString().trim();
-                String firstNameString = firstName.getText().toString().trim();
-                String lastNameString = lastName.getText().toString().trim();
+                final String email = signUpEmail.getText().toString().trim();
+                final String password = signUpPassword.getText().toString().trim();
+                final String phone = signUpPhone.getText().toString().trim();
+                final String firstNameString = firstName.getText().toString().trim();
+                final String lastNameString = lastName.getText().toString().trim();
 
                 boolean cancel = false;
                 View focusView = null;
@@ -81,26 +80,32 @@ public class SignupActivity extends AppCompatActivity {
                 } else {
                     // Show a progress spinner, and kick off a background task to
                     // perform the user login attempt.
-                    System.out.println("Attempting to login....");
 
                     auth.createUserWithEmailAndPassword(email, password)
                             .addOnCompleteListener(SignupActivity.this, new OnCompleteListener<AuthResult>() {
                                 @Override
                                 public void onComplete(@NonNull Task<AuthResult> task) {
-                                    Toast.makeText(SignupActivity.this, "createUserWithEmail:onComplete:" + task.isComplete(), Toast.LENGTH_SHORT).show();
+                                    Toast.makeText(SignupActivity.this, "Created a user", Toast.LENGTH_SHORT).show();
                                     if (!task.isSuccessful()) {
-                                        Toast.makeText(SignupActivity.this, "Authentication failed." + task.getException(),
+                                        Toast.makeText(SignupActivity.this, "Error while signing up" + task.getException(),
                                                 Toast.LENGTH_SHORT).show();
+                                    }
+                                    else {
+                                        String userID = auth.getCurrentUser().getUid();
+                                        mRootRef.child("Users").child(userID).child("email").setValue(email);
+                                        mRootRef.child("Users").child(userID).child("lastName").setValue(lastNameString);
+                                        mRootRef.child("Users").child(userID).child("firstName").setValue(firstNameString);
+                                        mRootRef.child("Users").child(userID).child("phoneNumber").setValue(phone);
+                                        mRootRef.child("Users").child(userID).child("type").setValue("rider");
+
+                                        Intent intent = new Intent(SignupActivity.this, LoginActivity.class);
+                                        startActivity(intent);
+                                        finish();
+                                        return;
+
                                     }
                                 }
                             });
-                    String userID = auth.getUid();
-                    mUsersRef.child(userID).child("email").setValue(email);
-                    mUsersRef.child(userID).child("lastName").setValue(lastNameString);
-                    mUsersRef.child(userID).child("firstName").setValue(firstNameString);
-                    mUsersRef.child(userID).child("phoneNumber").setValue(phone);
-                    mUsersRef.child(userID).child("type").setValue("rider");
-
                 }
 
             }
