@@ -49,6 +49,7 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
+import java.sql.SQLOutput;
 import java.util.HashMap;
 import java.util.List;
 
@@ -57,6 +58,7 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
     private GoogleMap mMap;
     GoogleApiClient mGoogleApiClient;
     Location mLastKnownLocation;
+    Location mDropoffLocation = new Location("Rider Dropoff Location");
     LocationRequest mLocationRequest;
     private Button mRequest;
     private LatLng pickUpLocation;
@@ -65,6 +67,9 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
     private DrawerLayout mDrawerLayout;
     private ActionBarDrawerToggle mToggle;
     private Boolean isLoggingOut = false;
+    private Boolean isDestSet = false;
+    private Marker mRiderMarker;
+
 
 
     @Override
@@ -92,39 +97,79 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
         mRequest.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
-                DatabaseReference ref = FirebaseDatabase.getInstance().getReference("RiderPosition");
 
-                GeoFire geoFire = new GeoFire(ref);
-
-                geoFire.setLocation(userId, new GeoLocation(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude()));
-
-                pickUpLocation = new LatLng(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude());
-                mMap.addMarker(new MarkerOptions().position(pickUpLocation).title("Pick Up Location"));
-                cameraZoom = 17;
-                mRequest.setText("Finding drivers...");
-
-                findClosestDriver();
-
-                if(driverFound){
-                    Toast.makeText(riderMapsActivity.this, "Driver found", Toast.LENGTH_SHORT).show();
+                if (!isDestSet){
+                    Toast.makeText(riderMapsActivity.this, "Please enter your destination", Toast.LENGTH_SHORT).show();
                 }
-                else{
-                    Toast.makeText(riderMapsActivity.this, "No drivers found", Toast.LENGTH_SHORT).show();
-                    mRequest.setText("Request ride");
+                else {
+//                    String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+//                    DatabaseReference ref = FirebaseDatabase.getInstance().getReference("RiderPosition");
+//                    GeoFire geoFire = new GeoFire(ref);
+//
+//                    geoFire.setLocation(userId, new GeoLocation(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude()));
+
+                    pickUpLocation = new LatLng(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude());
+                    if (mRiderMarker != null){
+                        mRiderMarker.remove();
+                    }
+                    mRiderMarker = mMap.addMarker(new MarkerOptions().position(pickUpLocation).title("Pick Up Location"));
+                    cameraZoom = 17;
+                    mRequest.setText("Finding drivers...");
+
+//                    String riderId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+//                    DatabaseReference riderLocationRef = FirebaseDatabase.getInstance().getReference().child("RiderDropoffPosition").child(riderId).child("l");
+//                    riderLocationRef.addValueEventListener(new ValueEventListener() {
+//                        @Override
+//                        public void onDataChange(DataSnapshot dataSnapshot) {
+//                            if(dataSnapshot.exists()){
+//
+//                                List<Object> map = (List<Object>) dataSnapshot.getValue();
+//                                double lat = 0;
+//                                double lng = 0;
+//                                if (map.get(0) != null && map.get(1) != null){
+//                                    lat = Double.parseDouble(map.get(0).toString());
+//                                    lng = Double.parseDouble(map.get(1).toString());
+//                                }
+//                                mDropoffLocation = new Location("Dropoff Location");
+//                                mDropoffLocation.setLatitude(lat);
+//                                mDropoffLocation.setLongitude(lng);
+//                            }
+//                        }
+//
+//                        @Override
+//                        public void onCancelled(DatabaseError databaseError) {
+//
+//                        }
+//                    });
+
+                    findClosestDriver();
+
+                    if(driverFound){
+                        Toast.makeText(riderMapsActivity.this, "Driver found at ", Toast.LENGTH_SHORT).show();
+                    }
+                    else{
+                        Toast.makeText(riderMapsActivity.this, "No drivers found", Toast.LENGTH_SHORT).show();
+                        mRequest.setText("Request ride");
+                    }
                 }
             }
         });
 
         PlaceAutocompleteFragment autocompleteFragment = (PlaceAutocompleteFragment)
-                getFragmentManager().findFragmentById(R.id.place_autocomplete_fragment);
+                getFragmentManager().findFragmentById(R.id.place_autocomplete_fragment_rider);
 
         autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
             @Override
             public void onPlaceSelected(Place place) {
                 // TODO: Get info about the selected place.
-                Toast.makeText(riderMapsActivity.this, place.getName().toString(), Toast.LENGTH_LONG).show();
-//                Log.i(TAG, "Place: " + place.getName());
+                String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+                DatabaseReference ref = FirebaseDatabase.getInstance().getReference("RiderDropoffPosition");
+
+                GeoFire geoFire = new GeoFire(ref);
+                geoFire.setLocation(userId, new GeoLocation(place.getLatLng().latitude, place.getLatLng().longitude) );
+                isDestSet = true;
+                mDropoffLocation.setLatitude(place.getLatLng().latitude);
+                mDropoffLocation.setLongitude(place.getLatLng().longitude);
             }
 
             @Override
@@ -144,58 +189,109 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
         return super.onOptionsItemSelected(item);
     }
 
-    private int radius = 1;
+    private int radius = 5;
     private Boolean driverFound = false;
     private String driverId;
+    private double minDist = Double.MAX_VALUE;
+    private double tempDist;
+
     private void findClosestDriver(){
         DatabaseReference driversAvailable = FirebaseDatabase.getInstance().getReference().child("AvailableDrivers");
         GeoFire geoFire = new GeoFire(driversAvailable);
-        if (radius < 70){
-            GeoQuery geoQuery = geoFire.queryAtLocation(new GeoLocation(pickUpLocation.latitude, pickUpLocation.longitude), radius);
-            geoQuery.removeAllListeners();
-            geoQuery.addGeoQueryEventListener(new GeoQueryEventListener() {
-                @Override
-                public void onKeyEntered(String key, GeoLocation location) {
-                    if (!driverFound){
-                        driverFound = true;
-                        driverId = key;
+        GeoQuery geoQuery = geoFire.queryAtLocation(new GeoLocation(pickUpLocation.latitude, pickUpLocation.longitude), radius);
 
-                        DatabaseReference driverRef = FirebaseDatabase.getInstance().getReference().child("Users").child(driverId);
-                        String riderId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+        geoQuery.removeAllListeners();
+        geoQuery.addGeoQueryEventListener(new GeoQueryEventListener() {
+            @Override
+            public void onKeyEntered(String key, GeoLocation location) {
 
-                        HashMap map = new HashMap();
-                        map.put("RiderId", riderId);
-                        driverRef.updateChildren(map);
+                Location location1 = new Location("Driver location");
+                location1.setLatitude(location.latitude);
+                location1.setLongitude(location.longitude);
 
-                        getDriverLocation();
-                    }
+                tempDist = mLastKnownLocation.distanceTo(location1);
+
+//                DatabaseReference driverLocationRef = FirebaseDatabase.getInstance().getReference().child("DriverDestination").child(key).child("l");
+//                driverLocationRef.addListenerForSingleValueEvent(new ValueEventListener() {
+//                    @Override
+//                    public void onDataChange(DataSnapshot dataSnapshot) {
+//                        if(dataSnapshot.exists()){
+//                            List<Object> map = (List<Object>) dataSnapshot.getValue();
+//                            double lat = 0;
+//                            double lng = 0;
+//                            mRequest.setText("Driver Found...");
+//                            if (map.get(0) != null && map.get(1) != null){
+//                                lat = Double.parseDouble(map.get(0).toString());
+//                                lng = Double.parseDouble(map.get(1).toString());
+//                            }
+//
+//                            Location drivertempDestination = new Location("Driver Dropoff Temp");
+//                            drivertempDestination.setLatitude(lat);
+//                            drivertempDestination.setLongitude(lng);
+//
+//                            tempDist += drivertempDestination.distanceTo(mDropoffLocation);
+//                        }
+//                    }
+//
+//                    @Override
+//                    public void onCancelled(DatabaseError databaseError) {
+//
+//                    }
+//                });
+
+
+                if (tempDist < minDist){
+                    driverId = key;
+                    minDist = tempDist;
+                    driverFound = true;
                 }
 
-                @Override
-                public void onKeyExited(String key) {
+//                System.out.println("Found driver "+key);
+//                if (!driverFound){
+//                    driverFound = true;
+//                    driverId = key;
+//
+//                    DatabaseReference driverRef = FirebaseDatabase.getInstance().getReference().child("Users").child(driverId);
+//                    String riderId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+//
+//                    HashMap map = new HashMap();
+//                    map.put("RiderId", riderId);
+//                    driverRef.updateChildren(map);
+//
+//                    getDriverLocation();
+//                }
+            }
 
+            @Override
+            public void onKeyExited(String key) {
+
+            }
+
+            @Override
+            public void onKeyMoved(String key, GeoLocation location) {
+
+            }
+
+            @Override
+            public void onGeoQueryReady() {
+                if (driverFound){
+                    System.out.println("Driver found with id "+ driverId);
+                    DatabaseReference driverRef = FirebaseDatabase.getInstance().getReference().child("Users").child(driverId);
+                    String riderId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+
+                    HashMap map = new HashMap();
+                    map.put("RiderId", riderId);
+                    driverRef.updateChildren(map);
+
+                    getDriverLocation();
                 }
+            }
 
-                @Override
-                public void onKeyMoved(String key, GeoLocation location) {
+            @Override
+            public void onGeoQueryError(DatabaseError error) {
 
-                }
-
-                @Override
-                public void onGeoQueryReady() {
-                    if (!driverFound){
-                        radius++;
-                        findClosestDriver();
-                    }
-                }
-
-                @Override
-                public void onGeoQueryError(DatabaseError error) {
-
-                }
-            });
-        }
-
+            }
+        });
     }
 
     @Override
@@ -238,11 +334,11 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
                     List<Object> map = (List<Object>) dataSnapshot.getValue();
                     double lat = 0;
                     double lng = 0;
-                    mRequest.setText("Driver Found...");
                     if (map.get(0) != null && map.get(1) != null){
                         lat = Double.parseDouble(map.get(0).toString());
                         lng = Double.parseDouble(map.get(1).toString());
                     }
+                    mRequest.setText("Driver Found...");
                     LatLng driverLatLng = new LatLng(lat, lng);
                     if (mDriverMarker != null){
                         mDriverMarker.remove();
@@ -353,6 +449,10 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
 
         GeoFire geoFire = new GeoFire(ref);
         geoFire.removeLocation(userId);
+        DatabaseReference ref1 = FirebaseDatabase.getInstance().getReference("RiderDropoffPosition");
+
+        GeoFire geoFire1 = new GeoFire(ref1);
+        geoFire1.removeLocation(userId);
     }
 
     @Override

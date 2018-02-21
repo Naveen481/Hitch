@@ -27,15 +27,20 @@ import com.firebase.geofire.GeoLocation;
 import com.firebase.geofire.LocationCallback;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.Status;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.ui.PlaceAutocompleteFragment;
+import com.google.android.gms.location.places.ui.PlaceSelectionListener;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
@@ -46,6 +51,7 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -89,6 +95,26 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         MenuItem nav_driverMode = menu.findItem(R.id.nav_driverMode);
         nav_driverMode.setTitle("Switch to Rider Mode");
 
+        PlaceAutocompleteFragment autocompleteFragment = (PlaceAutocompleteFragment)
+                getFragmentManager().findFragmentById(R.id.place_autocomplete_fragment_driver);
+
+        autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
+            @Override
+            public void onPlaceSelected(Place place) {
+                // TODO: Get info about the selected place.
+                String userId = FirebaseAuth.getInstance().getCurrentUser().getUid();
+                DatabaseReference ref = FirebaseDatabase.getInstance().getReference("DriverDestination");
+
+                GeoFire geoFire = new GeoFire(ref);
+                geoFire.setLocation(userId, new GeoLocation(place.getLatLng().latitude, place.getLatLng().longitude) );
+            }
+
+            @Override
+            public void onError(Status status) {
+                // TODO: Handle the error.
+//                Log.i(TAG, "An error occurred: " + status);
+            }
+        });
         getAssignedCustomer();
     }
 
@@ -109,6 +135,7 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         if(id == R.id.nav_driverMode){
             isLoggingOut = true;
             disconnectDriver();
+
             Intent intent = new Intent(DriverMapsActivity.this, riderMapsActivity.class);
             startActivity(intent);
             finish();
@@ -132,8 +159,10 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
             public void onDataChange(DataSnapshot dataSnapshot) {
                 if (dataSnapshot.exists()){
                     customerId = dataSnapshot.getValue().toString();
+                    System.out.println("Customer ID is "+customerId);
                     getPickUpPosition();
                 }
+
             }
 
             @Override
@@ -143,6 +172,7 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         });
     }
 
+    private Marker mRiderMarker;
     private void getPickUpPosition(){
         DatabaseReference riderRef = FirebaseDatabase.getInstance().getReference().child("RiderPosition").child(customerId).child("l");
         riderRef.addValueEventListener(new ValueEventListener() {
@@ -157,7 +187,10 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
                         lng = Double.parseDouble(map.get(1).toString());
                     }
                     LatLng driverLatLng = new LatLng(lat, lng);
-                    mMap.addMarker(new MarkerOptions().position(driverLatLng).title("Pick Up Location"));
+                    if (mRiderMarker != null){
+                        mRiderMarker.remove();
+                    }
+                    mRiderMarker = mMap.addMarker(new MarkerOptions().position(driverLatLng).title("Pick Up Location"));
                 }
             }
 
@@ -274,6 +307,19 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
 
         GeoFire geoFire = new GeoFire(ref);
         geoFire.removeLocation(userId);
+        DatabaseReference ref1 = FirebaseDatabase.getInstance().getReference("DriverDestination");
+
+        GeoFire geoFire1 = new GeoFire(ref1);
+        geoFire1.removeLocation(userId);
+
+        DatabaseReference ref2 = FirebaseDatabase.getInstance().getReference("WorkingDrivers");
+        GeoFire geoFire2 = new GeoFire(ref2);
+        geoFire2.removeLocation(userId);
+
+        DatabaseReference customerRef = FirebaseDatabase.getInstance().getReference().child("Users").child(userId);
+        HashMap map = new HashMap();
+        map.put("RiderId", "");
+        customerRef.updateChildren(map);
     }
 
     @Override
