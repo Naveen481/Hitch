@@ -145,7 +145,7 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
                     findClosestDriver();
 
                     if(driverFound){
-                        Toast.makeText(riderMapsActivity.this, "Driver found at ", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(riderMapsActivity.this, "Driver found!", Toast.LENGTH_SHORT).show();
                     }
                     else{
                         Toast.makeText(riderMapsActivity.this, "No drivers found", Toast.LENGTH_SHORT).show();
@@ -343,6 +343,24 @@ public class riderMapsActivity extends AppCompatActivity implements NavigationVi
                     if (mDriverMarker != null){
                         mDriverMarker.remove();
                     }
+
+                    Location location1 = new Location("");
+                    location1.setLatitude(pickUpLocation.latitude);
+                    location1.setLongitude(pickUpLocation.longitude);
+
+                    Location location2 = new Location("");
+                    location2.setLatitude(driverLatLng.latitude);
+                    location2.setLongitude(driverLatLng.longitude);
+
+                    int dist = (int) location1.distanceTo(location2);
+
+                    if (dist < 100){
+                        mRequest.setText("Driver Arrived");
+                    }
+                    else{
+                        mRequest.setText("Driver distance: "+  dist+" meters");
+                    }
+
                     mDriverMarker = mMap.addMarker(new MarkerOptions().position(driverLatLng).title("Driver Location"));
                 }
             }

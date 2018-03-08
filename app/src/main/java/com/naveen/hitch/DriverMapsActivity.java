@@ -20,8 +20,14 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
+import com.directions.route.AbstractRouting;
+import com.directions.route.Route;
+import com.directions.route.RouteException;
+import com.directions.route.Routing;
+import com.directions.route.RoutingListener;
 import com.firebase.geofire.GeoFire;
 import com.firebase.geofire.GeoLocation;
 import com.firebase.geofire.LocationCallback;
@@ -42,6 +48,8 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.Polyline;
+import com.google.android.gms.maps.model.PolylineOptions;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
@@ -51,12 +59,13 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-public class DriverMapsActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener, OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, com.google.android.gms.location.LocationListener {
+public class DriverMapsActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener, OnMapReadyCallback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, com.google.android.gms.location.LocationListener, RoutingListener {
 
     private GoogleMap mMap;
     GoogleApiClient mGoogleApiClient;
@@ -69,6 +78,9 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
     private Boolean isLoggingOut = false;
     private DrawerLayout mDrawerLayout;
     private ActionBarDrawerToggle mToggle;
+    private Boolean isWorking = false;
+
+    private Button endRideButton;
 
 
 
@@ -85,6 +97,8 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         mToggle = new ActionBarDrawerToggle(this, mDrawerLayout, R.string.open, R.string.close);
         mDrawerLayout.addDrawerListener(mToggle);
         mToggle.syncState();
+
+        polylines = new ArrayList<>();
 
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         NavigationView navigationView = (NavigationView) findViewById(R.id.navigation_view_driver);
@@ -132,6 +146,7 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         if(id == R.id.nav_Profile){
             Toast.makeText(this, "You are trying to access your profile", Toast.LENGTH_LONG).show();
         }
+
         if(id == R.id.nav_driverMode){
             isLoggingOut = true;
             disconnectDriver();
@@ -140,6 +155,7 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
             startActivity(intent);
             finish();
         }
+
         if(id == R.id.nav_logout){
             isLoggingOut = true;
             disconnectDriver();
@@ -151,6 +167,20 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         return false;
     }
 
+    private void createEndRideButton(){
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        endRideButton = new Button(this);
+        endRideButton.setText("End Ride");
+        endRideButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                disconnectDriver();
+            }
+        });
+    }
+
     private void getAssignedCustomer(){
         String driverId = FirebaseAuth.getInstance().getCurrentUser().getUid();
         DatabaseReference customerRef = FirebaseDatabase.getInstance().getReference().child("Users").child(driverId).child("RiderId");
@@ -159,8 +189,11 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
             public void onDataChange(DataSnapshot dataSnapshot) {
                 if (dataSnapshot.exists()){
                     customerId = dataSnapshot.getValue().toString();
-                    System.out.println("Customer ID is "+customerId);
+//                    System.out.println("Customer ID is "+customerId);
                     getPickUpPosition();
+                }
+                else {
+                    clearPolylines();
                 }
 
             }
@@ -186,11 +219,12 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
                         lat = Double.parseDouble(map.get(0).toString());
                         lng = Double.parseDouble(map.get(1).toString());
                     }
-                    LatLng driverLatLng = new LatLng(lat, lng);
+                    LatLng pickupLatLng = new LatLng(lat, lng);
                     if (mRiderMarker != null){
                         mRiderMarker.remove();
                     }
-                    mRiderMarker = mMap.addMarker(new MarkerOptions().position(driverLatLng).title("Pick Up Location"));
+                    mRiderMarker = mMap.addMarker(new MarkerOptions().position(pickupLatLng).title("Pick Up Location"));
+                    getRouteToMarker(pickupLatLng);
                 }
             }
 
@@ -199,6 +233,16 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
 
             }
         });
+    }
+
+    private void getRouteToMarker(LatLng pickupLatLng) {
+        Routing routing = new Routing.Builder()
+                .travelMode(AbstractRouting.TravelMode.DRIVING)
+                .withListener(this)
+                .alternativeRoutes(false)
+                .waypoints(new LatLng(mLastKnownLocation.getLatitude(),mLastKnownLocation.getLongitude()), pickupLatLng)
+                .build();
+        routing.execute();
     }
 
     /**
@@ -261,11 +305,13 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
 
             switch (customerId){
                 case "":
+                    isWorking = false;
                     geoFireWorking.removeLocation(userId);
                     geoFireAvailable.setLocation(userId, new GeoLocation(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude()));
                     break;
 
                 default:
+                    isWorking = true;
                     geoFireAvailable.removeLocation(userId);
                     geoFireWorking.setLocation(userId, new GeoLocation(mLastKnownLocation.getLatitude(), mLastKnownLocation.getLongitude()));
                     break;
@@ -320,6 +366,8 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         HashMap map = new HashMap();
         map.put("RiderId", "");
         customerRef.updateChildren(map);
+
+        mDrawerLayout.removeView(endRideButton);
     }
 
     @Override
@@ -328,5 +376,62 @@ public class DriverMapsActivity extends AppCompatActivity implements NavigationV
         if(!isLoggingOut){
             disconnectDriver();
         }
+    }
+
+    @Override
+    public void onRoutingFailure(RouteException e) {
+        if(e != null) {
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }else {
+            Toast.makeText(this, "Something went wrong, Try again", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onRoutingStart() {
+
+    }
+    private List<Polyline> polylines;
+    private static final int[] COLORS = new int[]{R.color.primary_dark_material_light};
+
+    @Override
+    public void onRoutingSuccess(ArrayList<Route> route, int j) {
+        if(polylines.size()>0) {
+            for (Polyline poly : polylines) {
+                poly.remove();
+            }
+        }
+
+        polylines = new ArrayList<>();
+        //add route(s) to the map.
+        for (int i = 0; i <route.size(); i++) {
+
+            //In case of more than 5 alternative routes
+            int colorIndex = i % COLORS.length;
+
+            PolylineOptions polyOptions = new PolylineOptions();
+            polyOptions.color(getResources().getColor(COLORS[colorIndex]));
+            polyOptions.width(10 + i * 3);
+            polyOptions.addAll(route.get(i).getPoints());
+            Polyline polyline = mMap.addPolyline(polyOptions);
+            polylines.add(polyline);
+
+//            if (route.get(i).getDistanceValue() > 0){
+//                Toast.makeText(getApplicationContext(),"Route "+ (i+1) +": distance - "+ route.get(i).getDistanceValue()+": duration - "+ route.get(i).getDurationValue(),Toast.LENGTH_SHORT).show();
+//            }
+       }
+
+    }
+
+    @Override
+    public void onRoutingCancelled() {
+
+    }
+
+    private void clearPolylines(){
+        for (Polyline polyline: polylines){
+            polyline.remove();
+        }
+        polylines.clear();
     }
 }
